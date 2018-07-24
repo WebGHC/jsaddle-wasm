@@ -6,7 +6,7 @@ let
       owner = "WebGHC";
       repo = "wasm-cross";
       rev = "d9470389fa3b68e3af266f69a485217f64107bf7";
-      sha256 = "1xdl803aw0c6100kaiqdzgmh3lbnqchrlfrxiqi11zwnggbbj4qf";
+      sha256 = "03zyh786sx33p9prz7b3cya0qhadvvywjyni78ff89ff2bgd9pp2";
       fetchSubmodules = true;
     }) {};
 
