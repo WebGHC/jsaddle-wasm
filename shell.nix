@@ -27,6 +27,7 @@ let
     overrides = self: super: {
       lens = doJailbreak super.lens;
       unliftio-core = doJailbreak super.unliftio-core;
+      jsaddle = self.callCabal2nix "jsaddle" /home/divam/nobup/wasm/jsaddle/jsaddle {};
     };
   };
   in pkg

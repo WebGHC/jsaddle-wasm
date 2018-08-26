@@ -17,11 +17,13 @@ extra-source-files:  ChangeLog.md, README.md
 cabal-version:       >=1.10
 
 library
-  -- exposed-modules:
+  exposed-modules:   Language.Javascript.JSaddle.Wasm
   -- other-modules:
   -- other-extensions:
   build-depends:       base >=4.11 && <5
                        , bytestring
+                       , jsaddle
+                       , aeson
   hs-source-dirs:      src
   default-language:    Haskell2010
 
@@ -33,5 +35,9 @@ executable jsaddle-wasm-test
   ghc-options:      
   build-depends:       base >=4.10 && <5
                        , bytestring
+                       , jsaddle
+                       , lens
+                       , text
+                       , jsaddle-wasm
   -- hs-source-dirs:
   default-language:    Haskell2010
