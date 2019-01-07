@@ -22,6 +22,7 @@ library
   -- other-extensions:
   build-depends:       base >=4.11 && <5
                        , bytestring
+                       , binary
                        , jsaddle
                        , aeson
   hs-source-dirs:      src
