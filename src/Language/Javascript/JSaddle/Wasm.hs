@@ -37,8 +37,8 @@ run2 entryPoint = do
 
   return ()
 
-run :: JSM () -> IO ()
-run entryPoint = do
+run :: Int -> JSM () -> IO ()
+run _ entryPoint = do
   putStrLn "Starting JSaddle-Wasm"
 
   jsInOut <- openBinaryFile "/dev/jsaddle_inout" ReadWriteMode
