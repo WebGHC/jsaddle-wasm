@@ -18,7 +18,7 @@ import Language.Javascript.JSaddle.Object
 main = do
   putStrLn "Hello from jsaddle-wasm-test"
 
-  run $ do
+  run 0 $ do
     -- eval "globalFunc = function (x) {return x.length;}"
     -- v <- jsgf "globalFunc" ["World"]
     eval ("w = console; w.log('Hello World from inside of JSADDLE!')" :: [Char])
