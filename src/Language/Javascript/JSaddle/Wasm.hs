@@ -61,7 +61,8 @@ run _ entryPoint = do
               (Right v)
                 | BSIO.null v -> loop
                 | otherwise -> do
-                  let size = Binary.decode (BS.fromStrict v) :: Word32
+                  -- Somehow we get this size in reverse!!
+                  let size = Binary.decode (BS.reverse $ BS.fromStrict v) :: Word32
                   BS.fromStrict <$> BSIO.hGetNonBlocking jsInOut (fromIntegral size)
 
     -- When to exit? never?
@@ -73,17 +74,15 @@ run _ entryPoint = do
   (processResult, _, start) <-
     runJavaScript sendBatch entryPoint
   forkIO . forever $ do
-    thisMsg <- receiveDataMessage
-    case decode thisMsg of
-      Nothing -> error $ "jsaddle Results decode failed : " <> show thisMsg
-      Just r  -> processResult r
+    msgs <- receiveDataMessage
+    processIncomingMsgs processResult msgs
 
   start
   waitTillClosed
 
 processIncomingMsgs :: (Results -> IO ()) -> ByteString -> IO ()
 processIncomingMsgs cont msgs = if (BS.length msgs < 5)
-  then error $ "no data loop: " <> show msgs
+  then error $ "processIncomingMsgs: no more data while looping: " <> show msgs
   else do
     let
       size = Binary.decode (BS.take 4 msgs) :: Word32
