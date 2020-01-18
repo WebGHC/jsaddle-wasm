@@ -54,11 +54,16 @@ run _ entryPoint = do
     receiveDataMessage = loop
       where
         loop = do
-          threadDelay (100)
-          try (BSIO.hGetLine jsInOut)
+          threadDelay 1
+          try (BSIO.hGetNonBlocking jsInOut 4)
             >>= \case
               (Left (ex :: IOException)) -> loop
-              (Right v) -> return $ BS.fromStrict v
+              (Right v)
+                | BSIO.null v -> loop
+                | otherwise -> do
+                  -- Somehow we get this size in reverse!!
+                  let size = Binary.decode (BS.reverse $ BS.fromStrict v) :: Word32
+                  BS.fromStrict <$> BSIO.hGetNonBlocking jsInOut (fromIntegral size)
 
     -- When to exit? never?
     waitTillClosed = forever $ do
@@ -76,13 +81,15 @@ run _ entryPoint = do
   waitTillClosed
 
 processIncomingMsgs :: (Results -> IO ()) -> ByteString -> IO ()
-processIncomingMsgs cont msgs = do
-  let
-    size = Binary.decode (BS.take 4 msgs) :: Word32
-    (thisMsg, rest) = BS.splitAt (fromIntegral $ 4 + size) msgs
-  case decode (BS.drop 4 thisMsg) of
-    Nothing -> error $ "jsaddle Results decode failed : " <> show thisMsg
-    Just r  -> cont r
-  case BS.length rest of
-    0 -> return ()
-    _ -> processIncomingMsgs cont rest
+processIncomingMsgs cont msgs = if (BS.length msgs < 5)
+  then error $ "processIncomingMsgs: no more data while looping: " <> show msgs
+  else do
+    let
+      size = Binary.decode (BS.take 4 msgs) :: Word32
+      (thisMsg, rest) = BS.splitAt (fromIntegral $ 4 + size) msgs
+    case decode (BS.drop 4 thisMsg) of
+      Nothing -> error $ "jsaddle Results decode failed : " <> show thisMsg
+      Just r  -> cont r
+    case BS.length rest of
+      0 -> return ()
+      _ -> processIncomingMsgs cont rest
