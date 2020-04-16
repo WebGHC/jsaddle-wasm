@@ -5,7 +5,6 @@
 
 module Language.Javascript.JSaddle.Wasm (
   run
-  , run2
   ) where
 
 import qualified Data.ByteString.Lazy as BS
@@ -23,19 +22,6 @@ import qualified Data.Binary as Binary
 import Language.Javascript.JSaddle.Types (JSM, Batch, Results)
 import Language.Javascript.JSaddle.Run (syncPoint, runJavaScript)
 import Data.Word (Word32)
-
-run2 :: JSM () -> IO ()
-run2 entryPoint = do
-  putStrLn "Starting JSaddle-Wasm"
-  -- jsInOut <- openBinaryFile "/dev/jsaddle_inout" ReadWriteMode
-
-  let
-    sendBatch :: Batch -> IO ()
-    sendBatch b = return ()
-
-  runJavaScript sendBatch entryPoint
-
-  return ()
 
 run :: Int -> JSM () -> IO ()
 run _ entryPoint = do
