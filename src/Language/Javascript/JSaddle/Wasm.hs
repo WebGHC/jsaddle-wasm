@@ -3,6 +3,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
 
 module Language.Javascript.JSaddle.Wasm (
   run
@@ -25,10 +26,12 @@ import qualified Data.ByteString as BSIO
 import Data.Int (Int64)
 import Data.Word (Word32)
 
+import Foreign.Ptr
 import Foreign.StablePtr
 import Foreign.C.String
-import Foreign.Marshal.Alloc (mallocBytes)
+import Foreign.Marshal.Alloc (mallocBytes, free, malloc)
 import Foreign.Marshal.Utils (copyBytes)
+import Foreign.Storable
 
 import System.IO (openBinaryFile, IOMode(..))
 
@@ -99,15 +102,26 @@ data HsEnv = HsEnv
   { _hsEnv_outgoingMessages :: MVar [Batch]
   , _hsEnv_processResult :: (Results -> IO ())
   , _hsEnv_processSyncResult :: (Results -> IO (Batch))
+  , _hsEnv_msgBufferPtr :: Ptr SharedMsgBuffer
   }
 
+-- Maintain a buffer for communication and its size
+data SharedMsgBuffer = SharedMsgBuffer CString Word32
+
 -- Exports
-foreign export ccall hsJsaddleProcessResult :: StablePtr HsEnv -> CString -> Bool -> Int -> IO Int64
+foreign export ccall hsJsaddleProcessResult :: StablePtr HsEnv -> Bool -> Int -> IO Int64
 
-foreign export ccall hsMalloc :: Int -> IO CString
+foreign export ccall hsMalloc :: StablePtr HsEnv -> Word32 -> IO (Ptr SharedMsgBuffer)
 
-hsMalloc :: Int -> IO CString
-hsMalloc = mallocBytes
+hsMalloc :: StablePtr HsEnv -> Word32 -> IO (Ptr SharedMsgBuffer)
+hsMalloc envPtr newSize = do
+  HsEnv _ _ _ bufPtr <- deRefStablePtr envPtr
+  SharedMsgBuffer buf size <- peek bufPtr
+  when (newSize > size) $ do
+    free buf
+    newBuf <- mallocBytes (fromIntegral newSize)
+    poke bufPtr (SharedMsgBuffer newBuf newSize)
+  pure bufPtr
 
 jsaddleInit :: Int -> JSM () -> IO (StablePtr HsEnv)
 jsaddleInit _ entryPoint = do
@@ -136,14 +150,21 @@ jsaddleInit _ entryPoint = do
     threadDelay (5*1000*1000)
     putStrLn "JSaddle-Wasm heartbeat"
 
-  newStablePtr $ HsEnv outgoingMessages processResult processSyncResult
+  bufPtr <- do
+    let initSize = (1024 * 1024) :: Word32
+    buf <- mallocBytes (fromIntegral initSize)
+    ptr <- malloc
+    poke ptr $ SharedMsgBuffer buf initSize
+    pure ptr
+
+  newStablePtr $ HsEnv outgoingMessages processResult processSyncResult bufPtr
 
 -- hsJsaddleProcessResult reads data from dataPtr, and writes back to the same place
--- TODO: the size of dataPtr memory should be adjusted for larger data
-hsJsaddleProcessResult :: StablePtr HsEnv -> CString -> Bool -> Int -> IO Int64
-hsJsaddleProcessResult envPtr dataPtr isSync dataLen = do
+hsJsaddleProcessResult :: StablePtr HsEnv -> Bool -> Int -> IO Int64
+hsJsaddleProcessResult envPtr isSync dataLen = do
   -- putStrLn "Doing hsJsaddleProcessResult"
-  HsEnv outgoingMessages processResult processSyncResult <- deRefStablePtr envPtr
+  HsEnv outgoingMessages processResult processSyncResult bufPtr <- deRefStablePtr envPtr
+  SharedMsgBuffer dataPtr bufSize <- peek bufPtr
 
   mResult <- if (dataLen == 0)
     then pure Nothing
@@ -153,7 +174,7 @@ hsJsaddleProcessResult envPtr dataPtr isSync dataLen = do
         Nothing -> error $ "jsaddle Results decode failed : "
         Just !r  -> pure $ Just r
 
-  mBatch <- case (isSync, mResult) of
+  batches <- case (isSync, mResult) of
     (True, Nothing) -> error "processSyncResult need single result"
     (True, Just (r:[])) -> (:[]) <$> processSyncResult r
     (True, Just (r:_)) -> error "processSyncResult got multiple results"
@@ -161,18 +182,38 @@ hsJsaddleProcessResult envPtr dataPtr isSync dataLen = do
       traverse (traverse processResult) mResult
       -- Give the forked threads some time to work
       let
-        loop m1 = do
+        loop m1 n = do
           threadDelay (1000*1)
           m2 <- modifyMVar outgoingMessages $ \m -> pure ([], m)
-          case m2 of
-            [] -> pure m1
-            _ -> loop (m1 ++ m2)
-      loop []
+          if (null m2) || (n < 0)
+            then pure m1
+            else loop (m1 ++ m2) (n - 1)
+      loop [] 10
 
-  case mBatch of
+  case batches of
     [] -> pure 0
     m -> do
       let outData = encode m
-      -- putStrLn $ "outmsgsize: " <> show (BS.length outData)
-      BSIO.useAsCStringLen (BS.toStrict outData) $ \(ptr, len) -> copyBytes dataPtr ptr len
+          dataLen = fromIntegral $ BS.length outData
+      targetPtr <- if (dataLen > bufSize)
+        then do
+          let newSize = head $ dropWhile (< dataLen) $ map ((^) 2) [1..]
+          hsMalloc envPtr newSize
+          SharedMsgBuffer newBuf _ <- peek bufPtr -- bufPtr remains same
+          pure newBuf
+        else (pure dataPtr)
+      -- putStrLn $ "outmsgsize: " <> show dataLen
+      BSIO.useAsCStringLen (BS.toStrict outData) $ \(ptr, len) -> copyBytes targetPtr ptr len
       pure $ BS.length outData
+
+-- The Char* and size values are read by JS code
+-- So this should be in sync with JS
+instance Storable SharedMsgBuffer where
+  sizeOf _ = sizeOf (undefined :: CString) + sizeOf (undefined :: Word32)
+  alignment _ = alignment (undefined :: CString)
+  peek p = SharedMsgBuffer
+    <$> peekByteOff p 0
+    <*> peekByteOff p (sizeOf (undefined :: CString))
+  poke p (SharedMsgBuffer c s) = do
+    pokeByteOff p 0 c
+    pokeByteOff p (sizeOf (undefined :: CString)) s
