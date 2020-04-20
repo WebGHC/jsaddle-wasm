@@ -4,12 +4,12 @@
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE CApiFFI #-}
+
 
 module Language.Javascript.JSaddle.Wasm (
-  run
-  , jsaddleInit
-  , hsJsaddleProcessResult
-  , HsEnv
+  runWorker
+  , run
   ) where
 
 import Control.Monad (when, void, forever)
@@ -38,8 +38,8 @@ import System.IO (openBinaryFile, IOMode(..))
 import Language.Javascript.JSaddle.Types (JSM, Batch, Results)
 import Language.Javascript.JSaddle.Run (syncPoint, runJavaScript)
 
-run :: Int -> JSM () -> IO ()
-run _ entryPoint = do
+runWorker :: Int -> JSM () -> IO ()
+runWorker _ entryPoint = do
   putStrLn "Starting JSaddle-Wasm"
 
   jsInOut <- openBinaryFile "/dev/jsaddle_inout" ReadWriteMode
@@ -97,6 +97,13 @@ processIncomingMsgs cont msgs = if (BS.length msgs < 5)
 
 -- JSaddle wasm HS side interface for running on main thread
 
+-- C side does not return
+foreign import capi "jsaddle-wasm-interface.h jsaddle_wasm_init" cJsaddleWasmInit :: StablePtr HsEnv -> IO ()
+
+run :: Int -> JSM () -> IO ()
+run _ entryPoint = cJsaddleWasmInit =<< jsaddleInit entryPoint
+
+
 -- This contains everything needed to do a re-entry from foriegn export API
 data HsEnv = HsEnv
   { _hsEnv_outgoingMessages :: MVar [Batch]
@@ -111,10 +118,10 @@ data SharedMsgBuffer = SharedMsgBuffer CString Word32
 -- Exports
 foreign export ccall hsJsaddleProcessResult :: StablePtr HsEnv -> Bool -> Int -> IO Int64
 
-foreign export ccall hsMalloc :: StablePtr HsEnv -> Word32 -> IO (Ptr SharedMsgBuffer)
+foreign export ccall hsJsaddleBufferMalloc :: StablePtr HsEnv -> Word32 -> IO (Ptr SharedMsgBuffer)
 
-hsMalloc :: StablePtr HsEnv -> Word32 -> IO (Ptr SharedMsgBuffer)
-hsMalloc envPtr newSize = do
+hsJsaddleBufferMalloc :: StablePtr HsEnv -> Word32 -> IO (Ptr SharedMsgBuffer)
+hsJsaddleBufferMalloc envPtr newSize = do
   HsEnv _ _ _ bufPtr <- deRefStablePtr envPtr
   SharedMsgBuffer buf size <- peek bufPtr
   when (newSize > size) $ do
@@ -123,8 +130,8 @@ hsMalloc envPtr newSize = do
     poke bufPtr (SharedMsgBuffer newBuf newSize)
   pure bufPtr
 
-jsaddleInit :: Int -> JSM () -> IO (StablePtr HsEnv)
-jsaddleInit _ entryPoint = do
+jsaddleInit :: JSM () -> IO (StablePtr HsEnv)
+jsaddleInit entryPoint = do
   putStrLn "Starting JSaddle-Wasm"
   outgoingMessages <- newMVar []
   lockInit <- newEmptyMVar
@@ -198,7 +205,7 @@ hsJsaddleProcessResult envPtr isSync dataLen = do
       targetPtr <- if (dataLen > bufSize)
         then do
           let newSize = head $ dropWhile (< dataLen) $ map ((^) 2) [1..]
-          hsMalloc envPtr newSize
+          hsJsaddleBufferMalloc envPtr newSize
           SharedMsgBuffer newBuf _ <- peek bufPtr -- bufPtr remains same
           pure newBuf
         else (pure dataPtr)
