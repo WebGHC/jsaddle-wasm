@@ -147,15 +147,15 @@ hsJsaddleProcessResult envPtr isSync dataLen = do
   case join mReqs of
     Just reqs -> sendData reqs
     Nothing -> do
-      -- Give the forked threads some time to work
+      -- Give the forked threads and RTS some time to work
       let
         loop m1 n = do
-          threadDelay (1000*1)
+          threadDelay 500
           m2 <- modifyMVar outgoingMessages $ \m -> pure ([], m)
           if (null m2) || (n < 0)
-            then pure m1
+            then pure (m1 ++ m2)
             else loop (m1 ++ m2) (n - 1)
-      reqs <- loop [] 10
+      reqs <- loop [] (-1)
       case reqs of
         [] -> pure 0
         _ -> sendData reqs
