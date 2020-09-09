@@ -123,7 +123,9 @@ hsJsaddleProcessResult envPtr isSync dataLen = do
     then do
       case decode (BS.fromStrict bs) of
         Nothing -> error "Decode error: SyncCommand"
-        Just command -> Just <$> processSyncCommand command
+        Just (command, rsps) -> do
+          processRsp rsps
+          Just <$> processSyncCommand command
     else do
       case decode (BS.fromStrict bs) of
         Nothing -> error "Decode error: [Rsp]"
